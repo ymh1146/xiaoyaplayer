@@ -3,12 +3,13 @@ import vlc
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QTreeWidget, QTreeWidgetItem, QLabel, 
                              QLineEdit, QPushButton, QSplitter, QFrame, QSlider,
-                             QMessageBox, QInputDialog, QSizePolicy, QStackedLayout)
+                             QMessageBox, QInputDialog, QSizePolicy, QStackedLayout, QStyle)
 from PyQt6.QtCore import Qt, QTimer, QUrl, QSize, QEvent
-from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor
+from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QDesktopServices
 from PyQt6.QtSvg import QSvgRenderer
 
 from core.webdav_client import WebDAVClient
+from core.search_client import SearchClient
 from core.sorter import SmartSorter
 from core.config import Config
 import gui.icons as icons
@@ -35,7 +36,11 @@ class MainWindow(QMainWindow):
         self.skip_intro = self.config.get("skip_intro", 0)
         self.skip_outro = self.config.get("skip_outro", 0)
         
+        self.skip_intro = self.config.get("skip_intro", 0)
+        self.skip_outro = self.config.get("skip_outro", 0)
+        
         self.client = None
+        self.search_client = SearchClient(self.webdav_url)
         self.current_playlist = []
         self.current_index = -1
         self.duration = 0
@@ -191,18 +196,68 @@ class MainWindow(QMainWindow):
         self.url_input.setStyleSheet("background-color: #1a1a1a; color: white; border: 1px solid #333; padding: 6px; border-radius:6px;")
         self.connect_btn = QPushButton("连接")
         self.connect_btn.setStyleSheet(bilibili_btn_style)
+        self.connect_btn.setFixedWidth(60)
         self.connect_btn.clicked.connect(self.connect_webdav)
         addr_layout.addWidget(self.url_input)
         addr_layout.addWidget(self.connect_btn)
         left_layout.addLayout(addr_layout)
 
+        # 搜索区域
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 搜索小雅资源...")
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #1a1a1a;
+                color: white;
+                border: 1px solid #333;
+                padding: 6px;
+                border-radius: 6px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #00aeec;
+            }
+        """)
+        self.search_input.returnPressed.connect(self.perform_search)
+        
+        search_btn = QPushButton("搜索")
+        search_btn.setStyleSheet(bilibili_btn_style)
+        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        search_btn.setFixedWidth(60)
+        search_btn.clicked.connect(self.perform_search)
+        
+        search_layout.addWidget(self.search_input)
+        search_layout.addWidget(search_btn)
+        left_layout.addLayout(search_layout)
+
         # Tree View
         self.tree = QTreeWidget()
         self.tree.setHeaderLabel("文件列表")
+        self.tree.setHeaderHidden(True) # 隐藏表头
         self.tree.setStyleSheet(bilibili_tree_style)
         self.tree.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.tree.itemExpanded.connect(self.on_item_expanded)
         left_layout.addWidget(self.tree)
+
+        # GitHub链接按钮
+        self.github_btn = QPushButton("⭐ GitHub")
+        self.github_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #00aeec;
+                border: 1px solid #00aeec;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #00aeec;
+                color: white;
+            }
+        """)
+        self.github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.github_btn.clicked.connect(self.open_github)
+        left_layout.addWidget(self.github_btn)
 
         self.left_panel.setMinimumWidth(250)
         self.left_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -918,6 +973,94 @@ class MainWindow(QMainWindow):
             pass
         self.config.save()
         super().closeEvent(event)
+    
+    def open_github(self):
+        """打开GitHub仓库"""
+        QDesktopServices.openUrl(QUrl("https://github.com/ymh1146/xiaoyaplayer"))
+
+    def perform_search(self):
+        """执行搜索"""
+        keyword = self.search_input.text().strip()
+        if not keyword:
+            return
+            
+        self.show_osd("正在搜索...")
+        # 禁用搜索按钮防止重复点击
+        self.search_input.setEnabled(False)
+        
+        try:
+            # 执行搜索
+            results = self.search_client.search(keyword)
+            
+            if not results:
+                self.show_osd("未找到相关资源")
+                self.search_input.setEnabled(True)
+                self.search_input.setFocus()
+                return
+                
+            # 清空树并显示结果
+            self.tree.clear()
+            self.tree.setHeaderLabel(f"搜索结果: {keyword}")
+            
+            for path in results:
+                item = QTreeWidgetItem(self.tree)
+                item.setText(0, path)
+                # 使用文件夹图标，因为搜索结果通常是目录
+                item.setIcon(0, self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+                # 标记为搜索结果
+                item.setData(0, Qt.ItemDataRole.UserRole, {"type": "search_result", "path": path})
+                
+            self.show_osd(f"找到 {len(results)} 个结果")
+            
+        except Exception as e:
+            self.show_osd(f"搜索出错: {str(e)}")
+            print(f"[ERROR] Search error: {e}")
+            
+        finally:
+            self.search_input.setEnabled(True)
+            self.search_input.setFocus()
+
+    def on_item_double_clicked(self, item, column):
+        """双击列表项"""
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+            
+        # 处理搜索结果点击
+        if isinstance(data, dict) and data.get("type") == "search_result":
+            path = data["path"]
+            print(f"[DEBUG] Loading search result path: {path}")
+            self.load_dir(path)
+            # 恢复树标题
+            self.tree.setHeaderLabel("文件列表")
+            return
+            
+        # 原有逻辑：处理文件或目录
+        if data['type'] == 'directory':
+            self.load_dir(data['name'], item)
+        else:
+            # 播放视频
+            self.current_playlist = []
+            # 获取当前目录下的所有视频文件
+            parent = item.parent()
+            if parent:
+                for i in range(parent.childCount()):
+                    child = parent.child(i)
+                    child_data = child.data(0, Qt.ItemDataRole.UserRole)
+                    if child_data['type'] != 'directory' and \
+                       os.path.splitext(child_data['name'])[1].lower() in VIDEO_EXTENSIONS:
+                        self.current_playlist.append(child_data)
+            else:
+                # 根目录文件（不太可能，但为了健壮性）
+                self.current_playlist.append(data)
+            
+            # 找到当前文件的索引
+            for i, f in enumerate(self.current_playlist):
+                if f['name'] == data['name']:
+                    self.current_index = i
+                    break
+            
+            self.play_video(data)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
