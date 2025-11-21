@@ -1,5 +1,7 @@
 PyQt6
 PyQt6-SVG
+Pillow
+nuitka
 python-vlc
 webdav4[fsspec]
 httpx
