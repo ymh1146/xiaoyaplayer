@@ -1,0 +1,5 @@
+PyQt6
+PyQt6-SVG
+python-vlc
+webdav4[fsspec]
+httpx
