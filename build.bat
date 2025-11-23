@@ -11,9 +11,9 @@ nuitka --standalone ^
     --include-package=webdav4 ^
     --include-package=httpx ^
     --output-dir=dist ^
-    --output-filename=小雅播放器.exe ^
+    --output-filename=XiaoyaPlayer.exe ^
     main.py
 
 echo.
-echo 编译完成！exe 位置: dist\小雅播放器.exe
+echo 编译完成！exe 位置: dist\XiaoyaPlayer.exe
 pause
