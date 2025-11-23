@@ -52,6 +52,12 @@ class MainWindow(QMainWindow):
         self.intro_skipped = False
         self.outro_skipped = False
         
+        # 视频结束标志（用于自动播放下一集）
+        self.video_ended = False
+        
+        # 播放历史恢复标志（防止重复恢复）
+        self.history_restored = False
+        
         # 长按标志
         self.intro_btn_long_press_active = False
         self.outro_btn_long_press_active = False
@@ -73,7 +79,7 @@ class MainWindow(QMainWindow):
         self.intro_btn_timer.timeout.connect(self.reset_intro)
         self.outro_btn_timer.timeout.connect(self.reset_outro)
         
-        # 启动时自动连接
+        # 启动时自动连接（但不自动恢复播放历史）
         QTimer.singleShot(100, self.connect_webdav)
         
         # 控制栏自动隐藏计时器
@@ -588,8 +594,7 @@ class MainWindow(QMainWindow):
             self.config.save()
             self.show_osd("连接成功")
             
-            # 连接成功后恢复播放历史
-            QTimer.singleShot(1000, self.restore_playback_history)
+            # 连接成功，但不自动恢复播放历史（改为用户点击播放时才恢复）
         except Exception as e:
             QMessageBox.critical(self, "连接失败", str(e))
             self.show_osd("连接失败")
@@ -647,9 +652,10 @@ class MainWindow(QMainWindow):
         self.config.set("last_played_path", path)
         self.config.save()
         
-        # 重置片头片尾跳过标志
+        # 重置片头片尾跳过标志和视频结束标志
         self.intro_skipped = False
         self.outro_skipped = False
+        self.video_ended = False
         
         # 设置恢复时间
         if resume_time is not None and resume_time > 0:
@@ -667,6 +673,11 @@ class MainWindow(QMainWindow):
             self.play_btn.setIcon(self._create_icon(icons.PLAY_ICON))
             self.show_osd("暂停")
         else:
+            # 如果当前没有播放内容，且未恢复过播放历史，则先恢复
+            if not self.history_restored and len(self.current_playlist) == 0 and self.client:
+                self.restore_playback_history()
+                return  # restore_playback_history 会自动开始播放
+            
             self.player.play()
             self.play_btn.setIcon(self._create_icon(icons.PAUSE_ICON))
             self.show_osd("播放")
@@ -805,6 +816,12 @@ class MainWindow(QMainWindow):
                     self.outro_skipped = True  # 先标记，避免重复
                     self.play_next()
                     self.show_osd(f"跳过片尾 ({self.skip_outro}s)")
+                
+                # 视频播放结束自动播放下一集（不依赖片尾设置）
+                if not self.video_ended and length - time < 1000:  # 剩余时间少于1秒
+                    self.video_ended = True
+                    if self.current_index < len(self.current_playlist) - 1:
+                        QTimer.singleShot(500, self.play_next)  # 延迟500ms播放下一集
 
     def eventFilter(self, source, event):
         """处理视频区域的鼠标事件"""
@@ -927,6 +944,12 @@ class MainWindow(QMainWindow):
     
     def restore_playback_history(self):
         """恢复上次播放的视频和进度"""
+        # 防止重复恢复
+        if self.history_restored:
+            return
+        
+        self.history_restored = True
+        
         last_path = self.config.get("last_played_path")
         last_time = self.config.get("last_played_time", 0)
         
